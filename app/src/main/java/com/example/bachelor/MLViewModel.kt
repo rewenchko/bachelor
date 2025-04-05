@@ -255,6 +255,7 @@ class MLViewModel : ViewModel() {
     }
 
 
+
     fun runBatchInference(context: Context, onComplete: (File) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -454,18 +455,25 @@ class MLViewModel : ViewModel() {
             val memoryUsedKB = (usedMemoryAfter - usedMemoryBefore).coerceAtLeast(0) / 1024
             val durationMs = (endTime - startTime) / 1_000_000
 
-            val outputProcessor = TensorProcessor.Builder().build()
-            val labeledProbability = TensorLabel(tfLiteLabels, outputProcessor.process(probabilityBuffer))
+            val rawArray = probabilityBuffer.buffer.array()
+            val intValues = rawArray.map { it.toInt() }
 
-            val results = labeledProbability.mapWithFloatValue.entries
-                .sortedByDescending { it.value }
-                .take(5)
-                .map { RecognitionResult(it.key, it.value) }
+            val topIndices = intValues.indices.sortedByDescending { intValues[it] }.take(5)
+
+            val results = topIndices.map { index ->
+                val label = tfLiteLabels.getOrElse(index) { "Unknown" }
+                val score = (intValues[index] + 128) / 255f
+
+                RecognitionResult(label, score)
+            }
+
+            Log.d("INT8_DEBUG", "Top-5: " + results.joinToString { "${it.label}: ${it.score}" })
 
             interpreter.close()
             Triple(results, durationMs, memoryUsedKB)
         }
     }
+
 
     private suspend fun runTFLiteInferenceWithMeta(context: Context, bitmap: Bitmap): Triple<List<RecognitionResult>, Long, Long> {
         return withContext(Dispatchers.IO) {
